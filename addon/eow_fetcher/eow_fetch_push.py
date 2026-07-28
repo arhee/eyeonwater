@@ -69,6 +69,10 @@ def _statistic_id(meter_id: str) -> str:
     return f"eyeonwater:water_meter_{_normalize_id(meter_id)}"
 
 
+def _irrigation_statistic_id(meter_id: str) -> str:
+    return f"eyeonwater:irrigation_{_normalize_id(meter_id)}"
+
+
 def _ha_unit(meter) -> str:  # noqa: ANN001
     native = getattr(
         meter.native_unit_of_measurement,
@@ -179,6 +183,44 @@ async def _fetch_flo_hourly_gal(
     return result
 
 
+async def _last_sum_before(
+    session: aiohttp.ClientSession,
+    ha_url: str,
+    token: str,
+    stat_id: str,
+    before: datetime.datetime,
+) -> float:
+    """Return the cumulative sum of stat_id at the last hour before *before*.
+
+    Lets a re-pushed (sliding) window continue the cumulative series instead of
+    resetting it. Returns 0.0 if no prior data exists.
+    """
+    ws_url = ha_url.rstrip("/").replace("http", "ws", 1) + "/api/websocket"
+    async with session.ws_connect(ws_url, heartbeat=30) as ws:
+        await ws.receive_json()
+        await ws.send_json({"type": "auth", "access_token": token})
+        if (await ws.receive_json()).get("type") != "auth_ok":
+            return 0.0
+        await ws.send_json(
+            {
+                "id": 1,
+                "type": "recorder/statistics_during_period",
+                "start_time": (before - datetime.timedelta(days=30)).isoformat(),
+                "end_time": before.isoformat(),
+                "statistic_ids": [stat_id],
+                "period": "hour",
+            },
+        )
+        while True:
+            msg = await ws.receive_json()
+            if msg.get("id") == 1 and msg.get("type") == "result":
+                break
+    rows = msg.get("result", {}).get(stat_id, [])
+    if not rows or rows[-1].get("sum") is None:
+        return 0.0
+    return float(rows[-1]["sum"])
+
+
 async def _post_state(
     session: aiohttp.ClientSession,
     ha_url: str,
@@ -227,6 +269,37 @@ async def publish_irrigation(
     for utc_hour, local_date, eow_gal in eow_hourly:
         irr = max(0.0, eow_gal - flo_hourly.get(utc_hour, 0.0))
         rows.append((utc_hour, local_date, round(irr, 1)))
+
+    # Push irrigation as a cumulative statistic (gallons) for charting/history.
+    # Continue the running sum from whatever is already stored before the window
+    # so the sliding re-push stays continuous and idempotent.
+    irr_stat_id = _irrigation_statistic_id(meter.meter_id)
+    base_sum = await _last_sum_before(
+        session, ha_url, token, irr_stat_id, rows[0][0],
+    )
+    cumulative = base_sum
+    irr_stats: list[dict] = []
+    for utc_hour, _, irr in rows:
+        cumulative += irr
+        irr_stats.append(
+            {
+                "start": utc_hour.isoformat(),
+                "state": round(cumulative, 3),
+                "sum": round(cumulative, 3),
+            },
+        )
+    await _ws_import(
+        session, ha_url, token,
+        {
+            "has_mean": False,
+            "has_sum": True,
+            "name": f"Irrigation {_normalize_id(meter.meter_id)}",
+            "source": "eyeonwater",
+            "statistic_id": irr_stat_id,
+            "unit_of_measurement": "gal",
+        },
+        irr_stats,
+    )
 
     last_hour_gal = rows[-1][2]
     # consecutive active hours ending at the most recent hour

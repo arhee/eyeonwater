@@ -51,9 +51,23 @@ Check the add-on **Log** tab — you should see `discovered 1 meter(s)` and
 **Settings → Dashboards → Energy → Water consumption → Add** the
 `eyeonwater:water_meter_<id>` statistic.
 
+## Irrigation monitoring (optional)
+
+If a Moen Flo (main-house) sensor is configured (`flo_entity`), the add-on also
+computes **irrigation = whole-house (EyeOnWater) − main-house (Flo)** in gallons
+and publishes:
+
+- statistic `eyeonwater:irrigation_<id>` (gal) — chartable daily history
+- `sensor.eyeonwater_irrigation_run_hours` — consecutive active hours; a
+  stuck-valve signal (normal cycles stay ≤2h)
+- `sensor.eyeonwater_irrigation_last_hour_gal` / `_today_gal` / `_yesterday_gal`
+
+`irrigation_active_gal` (default 10) is the gal/hr above which an hour counts as
+"active." Alert on a stuck valve with an automation on `..._run_hours`.
+
 ## Notes
 
 - `import_statistics` upserts by timestamp, so re-running is safe/idempotent.
 - To backfill a long history: set `days: 365`, start, wait one cycle, then set
   `days: 3` again.
-- Data appears roughly a day behind real time — that's how EyeOnWater reports.
+- Data is ~1–3 h behind real time (EyeOnWater reporting cadence).
