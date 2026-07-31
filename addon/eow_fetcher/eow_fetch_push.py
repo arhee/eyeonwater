@@ -46,6 +46,12 @@ NATIVE_TO_GAL = {"gal": 1.0, "cf": CF_TO_GAL, "cm": 264.172}
 DEFAULT_FLO_ENTITY = "sensor.flo_shutoff_today_s_water_usage"
 DEFAULT_ACTIVE_GAL = 10.0  # irrigation gal/hr above which an hour counts "active"
 
+# Hard cap on a single cycle so a hung network call can't freeze the loop for
+# hours (observed failure mode). A cycle normally takes a few seconds.
+CYCLE_TIMEOUT = 180  # seconds
+# Per-request ceiling for all HA API calls made with the shared session.
+HA_HTTP_TIMEOUT = 60  # seconds
+
 # HAOS writes add-on options here; env vars take precedence for local testing.
 _OPTIONS_FILE = pathlib.Path("/data/options.json")
 
@@ -366,7 +372,9 @@ async def run_once(
 ) -> None:
     """Fetch every meter and push its readings into HA once."""
     account = Account(eow_hostname=hostname, username=username, password=password)
-    async with aiohttp.ClientSession() as session:
+    # Session-level timeout so no single HA API call can hang indefinitely.
+    timeout = aiohttp.ClientTimeout(total=HA_HTTP_TIMEOUT)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         client = Client(session, account)
         await client.authenticate()
         meters = await account.fetch_meters(client)
@@ -446,8 +454,13 @@ async def main() -> None:
 
     while True:
         try:
-            await run_once(**kwargs)
+            await asyncio.wait_for(run_once(**kwargs), timeout=CYCLE_TIMEOUT)
             _LOGGER.info("cycle complete")
+        except asyncio.TimeoutError:
+            _LOGGER.error(
+                "cycle timed out after %ss (hung call aborted); will retry",
+                CYCLE_TIMEOUT,
+            )
         except Exception:  # noqa: BLE001
             _LOGGER.exception("cycle failed; will retry next interval")
         if interval <= 0:
