@@ -1,0 +1,36 @@
+name: EyeOnWater Fetcher
+version: "1.3.0"
+slug: eow_fetcher
+description: >-
+  Fetches EyeOnWater meter data and pushes it into Home Assistant statistics.
+  Runs host-networked so it reaches EyeOnWater from a network path their WAF
+  accepts (Home Assistant's core container is blocked by that WAF).
+arch:
+  - aarch64
+  - amd64
+# Host networking is REQUIRED: it puts outbound requests on the same path that
+# authenticates successfully (the core container's bridge network does not).
+host_network: true
+init: false
+startup: application
+boot: auto
+options:
+  username: ""
+  password: ""
+  ha_url: "http://localhost:8123"
+  ha_token: ""
+  hostname: "eyeonwater.com"
+  days: 3
+  interval_minutes: 30
+  flo_entity: "sensor.flo_shutoff_today_s_water_usage"
+  irrigation_active_gal: 10
+schema:
+  username: str
+  password: password
+  ha_url: str
+  ha_token: password
+  hostname: str
+  days: int(1,)
+  interval_minutes: int(5,)
+  flo_entity: str?
+  irrigation_active_gal: float?
