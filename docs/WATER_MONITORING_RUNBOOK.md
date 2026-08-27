@@ -67,6 +67,7 @@ The `curl_cffi` approach was a dead end and was removed from the branch.
       │                                   sensor.eyeonwater_irrigation_last_hour_gal
       │                                   sensor.eyeonwater_irrigation_today_gal
       │                                   sensor.eyeonwater_irrigation_yesterday_gal
+      │                                   sensor.eyeonwater_data_last_reading  (timestamp of newest reading)
       ▼
 [Home Assistant]
       ├── Energy Dashboard → Water  (uses eyeonwater:water_meter_...)
@@ -117,10 +118,19 @@ irrigation is the big draw that bypasses the Flo. Both normalized to gallons
   - Action: time-sensitive push to `notify.mobile_app_alexs_iphone_17_pro` +
     persistent notification.
 - **`EyeOnWater data stale (watchdog)`** (`automation.eyeonwater_data_stale_watchdog`)
-  - Trigger: `sensor.eyeonwater_irrigation_run_hours` `last_updated` older than
-    6h (a `/api/states` POST always bumps `last_updated`, so >6h = add-on truly
-    stopped). Surfaces a silent add-on failure.
-  - Action: push + persistent notification.
+  - Trigger: true **data age** > **12h**, i.e. `now() - sensor.eyeonwater_data_last_reading`
+    (the timestamp of the newest EyeOnWater reading the add-on publishes each
+    cycle, v1.4.0+). Because it compares against `now()`, it fires for BOTH
+    failure modes: EyeOnWater's backend stuck *and* the add-on dead (a frozen
+    timestamp still ages past 12h).
+  - Action: push + persistent notification, both reporting the **exact delay**
+    (e.g. "No fresh EyeOnWater reading for 13h 24m").
+  - Definition kept in-repo at
+    `addon/eow_fetcher/automations/eyeonwater_data_stale_watchdog.yaml`.
+  - NOTE: the old watchdog (≤v1.3.0) keyed off `sensor.eyeonwater_irrigation_run_hours`
+    `last_updated`, which the add-on bumps every 30 min regardless of data
+    freshness — so it only caught the add-on *dying*, never EyeOnWater lag. The
+    12h/data-age version supersedes it.
 
 ### 4e. Not managed here (intentionally)
 - **In-house leaks** are handled by the **Moen Flo app's own notifications** —
@@ -157,7 +167,8 @@ Then, in the app UI:
 ### Check health
 - Add-on **Log** tab: should show `discovered 1 meter(s)`, `pushed N points…`,
   `irrigation: run_hours=… today=… gal` every ~30 min.
-- If the data feed dies, the **watchdog** automation pushes an alert after 6h.
+- If the data goes stale (EyeOnWater lag or a dead add-on), the **watchdog**
+  automation pushes an alert after 12h, with the exact delay.
 
 ### Diagnostic scripts (run from a dev machine that CAN reach EyeOnWater)
 In `scripts/` (need Python 3.13 + `pyonwater==0.3.32`; `check_ha_stats.py` also
@@ -180,7 +191,7 @@ needs `aiohttp`):
 | What counts as an "active" irrigation hour | add-on option `irrigation_active_gal` (default 10 gal/hr) |
 | How often data refreshes | add-on option `interval_minutes` (default 30) |
 | Backfill long history | add-on option `days` → e.g. 365, run one cycle, set back to 3 |
-| Watchdog window | automation `EyeOnWater data stale (watchdog)`, the `21600` seconds (=6h) in its template |
+| Watchdog window | automation `EyeOnWater data stale (watchdog)`, the `43200` seconds (=12h) in its trigger template |
 | Where alerts go | replace `notify.mobile_app_alexs_iphone_17_pro` in both automations |
 
 ---

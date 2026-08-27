@@ -414,6 +414,28 @@ async def run_once(
                 data[-1].reading,
             )
 
+            # Publish the newest reading's timestamp so a watchdog can measure the
+            # TRUE data age (now - newest reading), not just add-on liveness. This
+            # is what actually goes stale when EyeOnWater's backend lags while the
+            # add-on keeps cycling. A timestamp sensor lets the automation compare
+            # against now(), so even a frozen value ages past the alert threshold.
+            newest = data[-1].dt.astimezone(datetime.timezone.utc)
+            age_h = round(
+                (datetime.datetime.now(datetime.timezone.utc) - newest).total_seconds()
+                / 3600.0,
+                1,
+            )
+            await _post_state(
+                session, ha_url, token, "sensor.eyeonwater_data_last_reading",
+                newest.isoformat(),
+                {"device_class": "timestamp",
+                 "friendly_name": "EyeOnWater newest reading",
+                 "icon": "mdi:water-check",
+                 "meter": _normalize_id(meter.meter_id),
+                 "age_hours": age_h},
+            )
+            _LOGGER.info("data age: %.1fh (newest reading %s)", age_h, newest)
+
             try:
                 await publish_irrigation(
                     session, ha_url, token, meter, data, flo_entity, active_gal,

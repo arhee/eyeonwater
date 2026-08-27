@@ -1,0 +1,51 @@
+# EyeOnWater data stale (watchdog) — 12h, reports exact delay.
+#
+# THIS IS THE LIVE DEFINITION (pushed via the automation config API; HA internal
+# id 1785258695, entity automation.eyeonwater_data_stale_watchdog).
+#
+# Measures TRUE data age: now() - newest EyeOnWater reading, using the
+# sensor.eyeonwater_data_last_reading timestamp the add-on publishes each cycle
+# (v1.4.0+). Because the trigger compares against now(), it fires whether
+# EyeOnWater's backend is stuck OR the add-on has died (a frozen timestamp still
+# ages past 12h). Until v1.4.0 is running, the sensor is absent and the guarded
+# trigger simply stays false (inert, no error).
+#
+# To edit in HA: Settings -> Automations -> this one -> Edit in YAML. Keep the
+# `id` so it replaces (not duplicates) it.
+id: "1785258695"
+alias: EyeOnWater data stale (watchdog)
+description: >-
+  Alerts when the newest EyeOnWater reading is more than 12h old (true data age =
+  now - sensor.eyeonwater_data_last_reading), reporting the exact delay. Fires for
+  both EyeOnWater backend lag and a dead add-on.
+mode: single
+triggers:
+  - platform: template
+    value_template: >-
+      {% set ts = states('sensor.eyeonwater_data_last_reading') %}{{ ts not in
+      ['unknown','unavailable','none',''] and (now() -
+      as_datetime(ts)).total_seconds() > 43200 }}
+conditions: []
+actions:
+  - action: notify.mobile_app_alexs_iphone_17_pro
+    data:
+      title: "⚠️ EyeOnWater data stale"
+      message: >-
+        No fresh EyeOnWater reading for {{ ((now() -
+        as_datetime(states('sensor.eyeonwater_data_last_reading'))).total_seconds()
+        // 3600) | int }}h {{ (((now() -
+        as_datetime(states('sensor.eyeonwater_data_last_reading'))).total_seconds()
+        % 3600) // 60) | int }}m (newest: {{
+        as_timestamp(states('sensor.eyeonwater_data_last_reading')) |
+        timestamp_custom('%b %-d %-I:%M %p') }}).
+  - action: persistent_notification.create
+    data:
+      title: EyeOnWater data stale
+      message: >-
+        No fresh EyeOnWater reading for {{ ((now() -
+        as_datetime(states('sensor.eyeonwater_data_last_reading'))).total_seconds()
+        // 3600) | int }}h {{ (((now() -
+        as_datetime(states('sensor.eyeonwater_data_last_reading'))).total_seconds()
+        % 3600) // 60) | int }}m (newest: {{
+        as_timestamp(states('sensor.eyeonwater_data_last_reading')) |
+        timestamp_custom('%b %-d %-I:%M %p') }}).
